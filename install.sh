@@ -110,6 +110,75 @@ if [ "$RESTART_NEEDED" = "true" ]; then
     echo "✅ Service restarted"
 fi
 
+# Setup shell integration
+echo "🐚 Setting up shell integration..."
+
+SHELL_UPDATED=""
+
+# Setup bash completion and PATH
+if [ -f /etc/bash.bashrc ] || [ -f ~/.bashrc ]; then
+    BASHRC_FILE=""
+
+    # Prefer system-wide for root, user-specific otherwise
+    if [ "$EUID" -eq 0 ] && [ -f /etc/bash.bashrc ]; then
+        BASHRC_FILE="/etc/bash.bashrc"
+    elif [ -f ~/.bashrc ]; then
+        BASHRC_FILE=~/.bashrc
+    fi
+
+    if [ -n "$BASHRC_FILE" ]; then
+        # Check if already configured
+        if ! grep -q "/usr/local/bin" "$BASHRC_FILE" 2>/dev/null; then
+            echo "" >> "$BASHRC_FILE"
+            echo "# rproxy - added by installer" >> "$BASHRC_FILE"
+            echo 'export PATH="/usr/local/bin:$PATH"' >> "$BASHRC_FILE"
+            SHELL_UPDATED="$SHELL_UPDATED bash"
+        fi
+    fi
+fi
+
+# Setup zsh completion and PATH
+if [ -f /etc/zsh/zshrc ] || [ -f ~/.zshrc ]; then
+    ZSHRC_FILE=""
+
+    # Prefer system-wide for root, user-specific otherwise
+    if [ "$EUID" -eq 0 ] && [ -f /etc/zsh/zshrc ]; then
+        ZSHRC_FILE="/etc/zsh/zshrc"
+    elif [ -f ~/.zshrc ]; then
+        ZSHRC_FILE=~/.zshrc
+    fi
+
+    if [ -n "$ZSHRC_FILE" ]; then
+        # Check if already configured
+        if ! grep -q "/usr/local/bin" "$ZSHRC_FILE" 2>/dev/null; then
+            echo "" >> "$ZSHRC_FILE"
+            echo "# rproxy - added by installer" >> "$ZSHRC_FILE"
+            echo 'export PATH="/usr/local/bin:$PATH"' >> "$ZSHRC_FILE"
+            SHELL_UPDATED="$SHELL_UPDATED zsh"
+        fi
+    fi
+fi
+
+# Fish shell support
+if [ -d ~/.config/fish ]; then
+    FISH_CONFIG=~/.config/fish/config.fish
+    if [ ! -f "$FISH_CONFIG" ]; then
+        mkdir -p ~/.config/fish
+        touch "$FISH_CONFIG"
+    fi
+
+    if ! grep -q "/usr/local/bin" "$FISH_CONFIG" 2>/dev/null; then
+        echo "" >> "$FISH_CONFIG"
+        echo "# rproxy - added by installer" >> "$FISH_CONFIG"
+        echo 'set -gx PATH /usr/local/bin $PATH' >> "$FISH_CONFIG"
+        SHELL_UPDATED="$SHELL_UPDATED fish"
+    fi
+fi
+
+if [ -n "$SHELL_UPDATED" ]; then
+    echo "✅ Shell integration added for:$SHELL_UPDATED"
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ rproxy $LATEST_RELEASE installed successfully!"
@@ -135,5 +204,22 @@ echo ""
 echo "📚 Documentation:"
 echo "  https://github.com/LeetCraft/rproxy"
 echo ""
+if [ -n "$SHELL_UPDATED" ]; then
+    echo "⚡ Shell configuration updated!"
+    echo "  Reload your shell to use 'rproxy' command:"
+    echo ""
+    if echo "$SHELL_UPDATED" | grep -q "bash"; then
+        echo "  source ~/.bashrc     # For bash"
+    fi
+    if echo "$SHELL_UPDATED" | grep -q "zsh"; then
+        echo "  source ~/.zshrc      # For zsh"
+    fi
+    if echo "$SHELL_UPDATED" | grep -q "fish"; then
+        echo "  source ~/.config/fish/config.fish  # For fish"
+    fi
+    echo ""
+    echo "  Or simply open a new terminal"
+    echo ""
+fi
 echo "💡 Pro tip: Use 'rproxy update' to check for updates"
 echo ""
