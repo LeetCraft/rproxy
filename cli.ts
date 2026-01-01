@@ -6,6 +6,7 @@
  */
 
 import { Config } from "./lib/config";
+import { certCommand } from "./cmd/cert";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -14,19 +15,38 @@ function printUsage() {
   console.log(`rproxy - A fast reverse proxy with automatic HTTPS
 
 Usage:
-  rproxy add <backend> <host>    Add a reverse proxy route
-  rproxy rm <host>               Remove a route
-  rproxy list                    List all routes
-  rproxy stats                   Show statistics
-  rproxy save                    Save configuration
-  rproxy serve                   Start the proxy server
-  rproxy help                    Show this help
+  rproxy <command> [options]
+
+Commands:
+  add <backend> <host>           Add a reverse proxy route
+  rm <host>                      Remove a route
+  list                           List all routes
+  stats                          Show statistics
+  cert <subcommand>              Certificate management
+  save                           Save configuration
+  serve                          Start the proxy server
+  help                           Show this help
+
+Certificate Commands:
+  cert install                   Install certbot (automatic)
+  cert issue <domain>            Issue HTTPS certificate (zero-downtime)
+  cert list                      List all certificates
+  cert renew                     Renew certificates
+  cert auto-renew                Setup automatic renewal
 
 Examples:
+  # Route management
   rproxy add 127.0.0.1:3000 mysite.com
   rproxy add localhost:8080 api.example.com
   rproxy rm mysite.com
   rproxy list
+
+  # Certificate management
+  rproxy cert install
+  rproxy cert issue mysite.com
+  rproxy cert list
+
+  # Statistics
   rproxy stats
 `);
 }
@@ -164,6 +184,13 @@ switch (command) {
   case "serve":
   case "start":
     await serve();
+    break;
+
+  case "cert":
+  case "certificate":
+  case "ssl":
+  case "https":
+    await certCommand(args.slice(1));
     break;
 
   case "help":

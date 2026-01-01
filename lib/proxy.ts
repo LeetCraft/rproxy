@@ -3,12 +3,20 @@ import { Config } from "./config";
 import { Stats } from "./stats";
 import { SecurityManager } from "./security";
 import { Logger } from "./logger";
+import { CertbotManager } from "./certbot";
+import { CircuitBreakerRegistry } from "./circuit-breaker";
+import { HealthChecker } from "./health-check";
+import { existsSync } from "fs";
+import { join } from "path";
 
 export class ReverseProxy {
   private config: Config;
   private stats: Stats;
   private security: SecurityManager;
   private logger: Logger;
+  private certbot: CertbotManager;
+  private circuitBreakers: CircuitBreakerRegistry;
+  private healthChecker: HealthChecker;
   private httpServer?: Server;
   private httpsServer?: Server;
   private statsServer?: Server;
@@ -18,6 +26,9 @@ export class ReverseProxy {
     this.stats = Stats.getInstance();
     this.security = new SecurityManager();
     this.logger = Logger.getInstance();
+    this.certbot = new CertbotManager();
+    this.circuitBreakers = CircuitBreakerRegistry.getInstance();
+    this.healthChecker = HealthChecker.getInstance();
   }
 
   private extractHost(request: Request): string {
@@ -25,71 +36,172 @@ export class ReverseProxy {
     return hostHeader.split(":")[0];
   }
 
-  private async proxyRequest(request: Request, backend: string): Promise<Response> {
+  /**
+   * Proxy request with circuit breaker, retry logic, and health checks
+   * Senior engineer implementation with reliability features
+   */
+  private async proxyRequest(
+    request: Request,
+    backend: string,
+    retryCount = 0
+  ): Promise<Response> {
+    const maxRetries = 2;
+    const breaker = this.circuitBreakers.get(backend);
+
     try {
-      const url = new URL(request.url);
-      const targetUrl = new URL(url.pathname + url.search, backend);
-
-      // Build forwarding headers
-      const headers = new Headers(request.headers);
-      const clientIp = this.security.getClientIp(request);
-
-      headers.set("X-Forwarded-Host", url.host);
-      headers.set("X-Forwarded-Proto", url.protocol.replace(":", ""));
-      headers.set("X-Forwarded-For", clientIp);
-      headers.set("X-Real-IP", clientIp);
-
-      // Remove hop-by-hop headers (RFC 2616)
-      const hopByHopHeaders = [
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
-      ];
-
-      hopByHopHeaders.forEach((header) => headers.delete(header));
-
-      this.logger.debug("Proxying request", {
-        host: url.host,
-        backend: targetUrl.toString(),
-        method: request.method,
+      // Execute through circuit breaker
+      const response = await breaker.execute(async () => {
+        return await this.executeProxyRequest(request, backend);
       });
 
-      // Forward with timeout
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+      return response;
+    } catch (error) {
+      // Mark backend as unhealthy on error
+      this.healthChecker.markUnhealthy(
+        backend,
+        error instanceof Error ? error.message : String(error)
+      );
 
-      try {
-        const response = await fetch(targetUrl, {
-          method: request.method,
-          headers,
-          body: request.body,
-          signal: controller.signal,
-          // @ts-ignore - Bun supports duplex
-          duplex: "half",
+      // Retry logic for transient failures
+      if (retryCount < maxRetries) {
+        this.logger.warn("Retrying request", {
+          backend,
+          attempt: retryCount + 1,
+          maxRetries,
         });
 
-        clearTimeout(timeout);
-        return this.security.addSecurityHeaders(response);
-      } catch (fetchError) {
-        clearTimeout(timeout);
-        throw fetchError;
+        // Exponential backoff: 100ms, 200ms
+        await new Promise((resolve) =>
+          setTimeout(resolve, 100 * Math.pow(2, retryCount))
+        );
+
+        return this.proxyRequest(request, backend, retryCount + 1);
       }
-    } catch (error) {
-      this.logger.error("Proxy error", {
+
+      this.logger.error("Proxy error after retries", {
         error: error instanceof Error ? error.message : String(error),
         backend,
+        retries: retryCount,
       });
-      return new Response("Bad Gateway", { status: 502 });
+
+      return new Response("Bad Gateway - Service Unavailable", { status: 502 });
     }
+  }
+
+  /**
+   * Execute actual proxy request
+   */
+  private async executeProxyRequest(
+    request: Request,
+    backend: string
+  ): Promise<Response> {
+    const url = new URL(request.url);
+    const targetUrl = new URL(url.pathname + url.search, backend);
+
+    // Build forwarding headers
+    const headers = new Headers(request.headers);
+    const clientIp = this.security.getClientIp(request);
+
+    headers.set("X-Forwarded-Host", url.host);
+    headers.set("X-Forwarded-Proto", url.protocol.replace(":", ""));
+    headers.set("X-Forwarded-For", clientIp);
+    headers.set("X-Real-IP", clientIp);
+
+    // Remove hop-by-hop headers (RFC 2616)
+    const hopByHopHeaders = [
+      "connection",
+      "keep-alive",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade",
+    ];
+
+    hopByHopHeaders.forEach((header) => headers.delete(header));
+
+    this.logger.debug("Proxying request", {
+      host: url.host,
+      backend: targetUrl.toString(),
+      method: request.method,
+    });
+
+    // Forward with timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const response = await fetch(targetUrl, {
+        method: request.method,
+        headers,
+        body: request.body,
+        signal: controller.signal,
+        // @ts-ignore - Bun supports duplex
+        duplex: "half",
+      });
+
+      clearTimeout(timeout);
+
+      // Check for backend errors
+      if (response.status >= 500) {
+        throw new Error(`Backend error: ${response.status}`);
+      }
+
+      return this.security.addSecurityHeaders(response);
+    } catch (fetchError) {
+      clearTimeout(timeout);
+      throw fetchError;
+    }
+  }
+
+  /**
+   * Handle ACME HTTP-01 challenge for Let's Encrypt
+   * Serves challenges from /.well-known/acme-challenge/ directory
+   */
+  private async handleAcmeChallenge(request: Request): Promise<Response | null> {
+    const url = new URL(request.url);
+
+    // Check if this is an ACME challenge request
+    if (!url.pathname.startsWith("/.well-known/acme-challenge/")) {
+      return null;
+    }
+
+    const challengeDir = this.certbot.getAcmeChallengeDir();
+    const challengePath = join(
+      challengeDir,
+      ".well-known/acme-challenge",
+      url.pathname.replace("/.well-known/acme-challenge/", "")
+    );
+
+    this.logger.debug("ACME challenge request", { path: challengePath });
+
+    // Serve the challenge file
+    if (existsSync(challengePath)) {
+      const file = Bun.file(challengePath);
+      const content = await file.text();
+
+      return new Response(content, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain",
+        },
+      });
+    }
+
+    this.logger.warn("ACME challenge file not found", { path: challengePath });
+    return new Response("Not Found", { status: 404 });
   }
 
   private async handleRequest(request: Request): Promise<Response> {
     this.stats.incrementTotal();
+
+    // Handle ACME challenge first (highest priority for zero-downtime cert issuance)
+    const acmeResponse = await this.handleAcmeChallenge(request);
+    if (acmeResponse) {
+      this.stats.incrementSuccess();
+      return acmeResponse;
+    }
 
     const host = this.extractHost(request);
 
@@ -146,6 +258,13 @@ export class ReverseProxy {
 
   async start(): Promise<void> {
     this.logger.info("Starting rproxy server");
+
+    // Start health checking for all configured backends
+    const routes = this.config.getAllRoutes();
+    for (const route of routes) {
+      this.healthChecker.startChecking(route.backend);
+      this.logger.debug("Started health checks", { backend: route.backend });
+    }
 
     // HTTP server on port 80
     this.httpServer = Bun.serve({
@@ -229,6 +348,9 @@ export class ReverseProxy {
   async stop(): Promise<void> {
     this.logger.info("Shutting down gracefully");
 
+    // Stop health checking
+    this.healthChecker.stopAll();
+
     const shutdownPromises: Promise<void>[] = [];
 
     if (this.httpServer) {
@@ -265,6 +387,24 @@ export class ReverseProxy {
 
   reload(): void {
     this.logger.info("Configuration reloaded");
-    // SQLite-backed config is always up-to-date
+
+    // Update health checks for new/removed backends
+    const routes = this.config.getAllRoutes();
+    const currentBackends = new Set(routes.map((r) => r.backend));
+
+    // Start health checks for new backends
+    for (const route of routes) {
+      this.healthChecker.startChecking(route.backend);
+    }
+
+    // Stop health checks for removed backends
+    const allStatuses = this.healthChecker.getAllStatuses();
+    for (const backend of allStatuses.keys()) {
+      if (!currentBackends.has(backend)) {
+        this.healthChecker.stopChecking(backend);
+      }
+    }
+
+    this.logger.info("Health checks updated");
   }
 }
