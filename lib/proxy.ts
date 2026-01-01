@@ -150,9 +150,9 @@ export class ReverseProxy {
     // HTTP server on port 80
     this.httpServer = Bun.serve({
       port: 80,
-      async fetch(request) {
+      fetch: async (request) => {
         return this.handleRequest(request);
-      }.bind(this),
+      },
       error: (error) => {
         this.logger.error("HTTP Server error", {
           error: error instanceof Error ? error.message : String(error),
@@ -174,9 +174,9 @@ export class ReverseProxy {
       if ((await keyFile.exists()) && (await certFile.exists())) {
         this.httpsServer = Bun.serve({
           port: 443,
-          async fetch(request) {
+          fetch: async (request) => {
             return this.handleRequest(request);
-          }.bind(this),
+          },
           tls: {
             key: keyFile,
             cert: certFile,
