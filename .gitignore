@@ -1,0 +1,25 @@
+# Binaries
+rproxy
+rproxy-*
+*.exe
+
+# Dependencies
+node_modules/
+
+# Environment
+.env*
+
+# Build artifacts
+dist/
+build/
+
+# Config and data
+/etc/rproxy/
+*.db
+*.db-*
+
+# OS files
+.DS_Store
+
+# Logs
+*.log

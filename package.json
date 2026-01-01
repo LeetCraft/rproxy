@@ -1,0 +1,17 @@
+{
+  "name": "rproxy",
+  "version": "1.0.0",
+  "description": "A fast reverse proxy with automatic HTTPS",
+  "type": "module",
+  "bin": {
+    "rproxy": "./cli.ts"
+  },
+  "scripts": {
+    "build": "bun build cli.ts --compile --outfile rproxy",
+    "dev": "bun --hot server.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

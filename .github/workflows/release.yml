@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build for Linux x64
+        run: |
+          bun build cli.ts --compile --target=bun-linux-x64 --outfile rproxy-linux-x64
+          chmod +x rproxy-linux-x64
+
+      - name: Build for Linux ARM64
+        run: |
+          bun build cli.ts --compile --target=bun-linux-arm64 --outfile rproxy-linux-arm64
+          chmod +x rproxy-linux-arm64
+
+      - name: Create checksums
+        run: |
+          sha256sum rproxy-linux-x64 > rproxy-linux-x64.sha256
+          sha256sum rproxy-linux-arm64 > rproxy-linux-arm64.sha256
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            rproxy-linux-x64
+            rproxy-linux-x64.sha256
+            rproxy-linux-arm64
+            rproxy-linux-arm64.sha256
+            rproxy.service
+            install.sh
+          body: |
+            ## Installation
+
+            **One-liner install:**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/LeetCraft/rproxy/${{ steps.get_version.outputs.VERSION }}/install.sh | sudo bash
+            ```
+
+            ## Quick Start
+
+            ```bash
+            # Add a route
+            rproxy add 127.0.0.1:3000 mysite.com
+
+            # Start the service
+            sudo systemctl start rproxy
+
+            # View statistics
+            rproxy stats
+            ```
+
+            ## What's New
+
+            See commit history for changes in this release.
+
+            ## Downloads
+
+            - **Linux x64**: `rproxy-linux-x64`
+            - **Linux ARM64**: `rproxy-linux-arm64`
+
+            Verify downloads with the `.sha256` checksums.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
