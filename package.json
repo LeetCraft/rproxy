@@ -1,7 +1,7 @@
 {
   "name": "rproxy",
-  "version": "1.0.0",
-  "description": "A fast reverse proxy with automatic HTTPS",
+  "version": "2.1.0",
+  "description": "A world-class reverse proxy with automatic HTTPS",
   "type": "module",
   "bin": {
     "rproxy": "./cli.ts"

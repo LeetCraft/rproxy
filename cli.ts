@@ -7,6 +7,7 @@
 
 import { Config } from "./lib/config";
 import { certCommand } from "./cmd/cert";
+import { updateCommand } from "./cmd/update";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -23,6 +24,7 @@ Commands:
   list                           List all routes
   stats                          Show statistics
   cert <subcommand>              Certificate management
+  update                         Check for updates
   save                           Save configuration
   serve                          Start the proxy server
   help                           Show this help
@@ -191,6 +193,11 @@ switch (command) {
   case "ssl":
   case "https":
     await certCommand(args.slice(1));
+    break;
+
+  case "update":
+  case "upgrade":
+    await updateCommand();
     break;
 
   case "help":
