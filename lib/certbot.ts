@@ -24,11 +24,15 @@ export interface Certificate {
 
 export class CertbotManager {
   private logger: Logger;
-  private certDir = "/var/lib/rproxy/certs";
-  private acmeChallengeDir = "/var/lib/rproxy/acme-challenges";
+  private certDir: string;
+  private acmeChallengeDir: string;
 
   constructor() {
     this.logger = Logger.getInstance();
+    // Allow override via environment variable
+    const baseDir = process.env.RPROXY_DATA_DIR || "/var/lib/rproxy";
+    this.certDir = `${baseDir}/certs`;
+    this.acmeChallengeDir = `${baseDir}/acme-challenges`;
     this.ensureDirectories();
   }
 

@@ -22,9 +22,13 @@ export class Config {
     this.initDatabase();
   }
 
-  static getInstance(dbPath = "/etc/rproxy/config.db"): Config {
+  static getInstance(dbPath?: string): Config {
     if (!Config.instance) {
-      Config.instance = new Config(dbPath);
+      // Use environment variable, passed parameter, or default
+      const configPath = dbPath ||
+                         process.env.RPROXY_CONFIG_DIR ||
+                         "/etc/rproxy/config.db";
+      Config.instance = new Config(configPath);
     }
     return Config.instance;
   }
